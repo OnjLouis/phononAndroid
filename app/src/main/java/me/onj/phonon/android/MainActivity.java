@@ -39,6 +39,7 @@ public final class MainActivity extends Activity {
     private boolean ready;
     private Button languageButton, voiceButton, play, stop, updates;
     private Button resetSample;
+    private Button pauseLength;
     private TextView status, systemVoice;
     private EditText text;
     private PreviewSample preview;
@@ -93,6 +94,7 @@ public final class MainActivity extends Activity {
         systemVoice.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         refreshNames();
         refreshSystemVoice();
+        pauseLength = button(page, "Pause length: " + PauseLength.selected(this).label, this::choosePauseLength);
         heading(page, "Preview", 20);
         text = new EditText(this);
         text.setHint("Test text");
@@ -176,7 +178,8 @@ public final class MainActivity extends Activity {
         helpSection(page, "Voices and controls",
                 "Phonon has 102 voices in English, French, German, Spanish and Portuguese. "
                         + "Use Android text-to-speech settings for speaking rate and pitch. "
-                        + "Changing languages preserves your preview text. Tap Reset Sample for the built-in text.");
+                        + "Changing languages preserves your preview text. Tap Reset Sample for the built-in text. "
+                        + "Pause length adjusts quiet gaps in both previews and system speech. Default leaves those gaps unchanged.");
         helpSection(page, "Privacy",
                 "Speech runs on your device. Phonon does not send text or audio to a server. "
                         + "Update checks contact GitHub. External links open in your browser.");
@@ -240,6 +243,19 @@ public final class MainActivity extends Activity {
                         group = tag;
                         choose(inGroup().get(0));
                     }
+                    dialog.dismiss();
+                }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void choosePauseLength() {
+        PauseLength[] choices = PauseLength.values();
+        String[] labels = new String[choices.length];
+        for (int i = 0; i < labels.length; ++i) labels[i] = choices[i].label;
+        new AlertDialog.Builder(this).setTitle("Pause length")
+                .setSingleChoiceItems(labels, PauseLength.selected(this).ordinal(), (dialog, item) -> {
+                    stop();
+                    choices[item].save(this);
+                    pauseLength.setText("Pause length: " + choices[item].label);
                     dialog.dismiss();
                 }).setNegativeButton("Cancel", null).show();
     }

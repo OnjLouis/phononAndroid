@@ -21,6 +21,10 @@ The built-in preview follows the language you choose. Changing languages keeps
 the text you typed. Tap **Reset Sample** to return to the built-in text for the
 current language.
 
+**Pause length** applies to previews and system speech. Choose **Shorter** or
+**Longer** to change sustained quiet gaps, or keep **Default** for the original
+gap timing. This does not change punctuation or the speaking rate.
+
 **Help** is in the top bar. The **About** section links to
 [Gradium](https://gradium.ai/) and [Andre's software catalogue](https://onj.me/software/).
 

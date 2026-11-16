@@ -18,9 +18,9 @@ final class NativeEngine implements AutoCloseable {
         if (handle == 0) throw new IOException("Could not load the speech model.");
     }
 
-    boolean speak(String text, VoiceCatalog.Entry voice, int rate, int pitch, AudioSink sink) {
+    boolean speak(String text, VoiceCatalog.Entry voice, int rate, int pitch, PauseLength pause, AudioSink sink) {
         return render(handle, utf8(text), utf8(voice.language()), utf8(voice.modelName()),
-                scale(rate, 3f), scale(pitch, 2f), sink);
+                scale(rate, 3f), scale(pitch, 2f), pause.nativeMode, sink);
     }
 
     static float scale(int percent, float maximum) {
@@ -38,6 +38,6 @@ final class NativeEngine implements AutoCloseable {
 
     private static native long open(byte[] path);
     private static native boolean render(long handle, byte[] text, byte[] lang, byte[] voice,
-                                         float speed, float pitch, AudioSink sink);
+                                         float speed, float pitch, int pause, AudioSink sink);
     private static native void dispose(long handle);
 }

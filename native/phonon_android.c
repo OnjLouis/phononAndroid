@@ -2,10 +2,11 @@
 #include <jni.h>
 #include <math.h>
 #include <stdint.h>
+#include "pause_length.h"
 #include "ptts.h"
 #include "sonic.h"
 
-#define SAMPLE_RATE 24000
+#define SAMPLE_RATE PAUSE_SAMPLE_RATE
 #define BLOCK_SAMPLES 960
 
 typedef struct {
@@ -14,6 +15,9 @@ typedef struct {
     jmethodID accept;
     jbyteArray output;
     sonicStream sonic;
+    PauseLength pause;
+    float buffered[BLOCK_SAMPLES];
+    size_t buffered_count;
 } Render;
 
 static bool send(Render *state, const float *samples, int count) {
@@ -31,22 +35,52 @@ static bool send(Render *state, const float *samples, int count) {
         env, state->sink, state->accept, state->output, count * 2) == JNI_TRUE;
 }
 
+static bool emit_buffer(Render *state) {
+    int count = (int)state->buffered_count;
+    state->buffered_count = 0;
+    return !count || send(state, state->buffered, count);
+}
+
+static bool enqueue(void *user, const float *pcm, size_t count) {
+    Render *state = user;
+    while (count) {
+        size_t n = BLOCK_SAMPLES - state->buffered_count;
+        if (n > count) n = count;
+        memcpy(state->buffered + state->buffered_count, pcm, n * sizeof(float));
+        state->buffered_count += n;
+        if (state->buffered_count == BLOCK_SAMPLES && !emit_buffer(state)) return false;
+        pcm += n;
+        count -= n;
+    }
+    return true;
+}
+
+static bool output(Render *state, const float *pcm, int count) {
+    if (state->pause.mode == PAUSE_DEFAULT) return send(state, pcm, count);
+    return pause_push(&state->pause, pcm, (size_t)count, enqueue, state) && emit_buffer(state);
+}
+
 static bool drain(Render *state) {
     float buffer[BLOCK_SAMPLES];
     int count;
     while ((count = sonicReadFloatFromStream(state->sonic, buffer, BLOCK_SAMPLES)) > 0) {
-        if (!send(state, buffer, count)) return false;
+        if (!output(state, buffer, count)) return false;
     }
     return true;
 }
 
 static bool frames(const float *pcm, size_t samples, void *user) {
     Render *state = user;
+    JNIEnv *env = state->env;
+    // Quiet audio can be withheld in the opt-in modes; keep cancellation live.
+    if (state->pause.mode != PAUSE_DEFAULT &&
+        ((*env)->CallBooleanMethod(env, state->sink, state->accept, state->output, 0) != JNI_TRUE ||
+         (*env)->ExceptionCheck(env))) return false;
     while (samples) {
         int count = samples > BLOCK_SAMPLES ? BLOCK_SAMPLES : (int)samples;
         if (state->sonic) {
             if (!sonicWriteFloatToStream(state->sonic, pcm, count) || !drain(state)) return false;
-        } else if (!send(state, pcm, count)) {
+        } else if (!output(state, pcm, count)) {
             return false;
         }
         pcm += count;
@@ -68,11 +102,12 @@ JNIEXPORT jlong JNICALL Java_me_onj_phonon_android_NativeEngine_open(
 
 JNIEXPORT jboolean JNICALL Java_me_onj_phonon_android_NativeEngine_render(
     JNIEnv *env, jclass cls, jlong pointer, jbyteArray text, jbyteArray lang,
-    jbyteArray voice, jfloat speed, jfloat pitch, jobject sink) {
+    jbyteArray voice, jfloat speed, jfloat pitch, jint pause, jobject sink) {
     (void)cls;
     PttsHandle *handle = (PttsHandle *)(intptr_t)pointer;
     jbyte *content = NULL, *language = NULL, *name = NULL;
-    Render state = {.env = env, .sink = sink};
+    Render state = {.env = env, .sink = sink, .pause.mode =
+        pause == PAUSE_SHORTER || pause == PAUSE_LONGER ? (PauseMode)pause : PAUSE_DEFAULT};
     bool ok = false;
     if (!handle) return JNI_FALSE;
     content = (*env)->GetByteArrayElements(env, text, NULL);
@@ -95,8 +130,11 @@ JNIEXPORT jboolean JNICALL Java_me_onj_phonon_android_NativeEngine_render(
     if (!ptts_set_language(handle, (const char *)language) || !ptts_set_voice(handle, (const char *)name)) goto done;
     PttsResult result;
     ok = ptts_speak(handle, (const char *)content, frames, &state, &result);
-    if (ok && state.sonic && !(*env)->ExceptionCheck(env)) {
-        ok = sonicFlushStream(state.sonic) && drain(&state);
+    if (ok && !(*env)->ExceptionCheck(env)) {
+        if (state.sonic) ok = sonicFlushStream(state.sonic) && drain(&state);
+        if (ok && state.pause.mode != PAUSE_DEFAULT) {
+            ok = pause_finish(&state.pause, enqueue, &state) && emit_buffer(&state);
+        }
     }
 done:
     if (state.sonic) sonicDestroyStream(state.sonic);

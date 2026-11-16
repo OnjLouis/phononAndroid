@@ -92,7 +92,7 @@ public final class PhononService extends TextToSpeechService {
                 if (token != generation.get()) return;
                 if (callback.start(NativeEngine.SAMPLE_RATE, AudioFormat.ENCODING_PCM_16BIT, 1) != SUCCESS) return;
                 boolean ok = text == null || text.toString().trim().isEmpty() || active.speak(text.toString(), selected,
-                        request.getSpeechRate(), request.getPitch(), (pcm, length) -> {
+                        request.getSpeechRate(), request.getPitch(), PauseLength.selected(this), (pcm, length) -> {
                             int max = callback.getMaxBufferSize() & ~1;
                             if (max == 0 || destroyed || token != generation.get()) return false;
                             for (int offset = 0; offset < length; offset += max) {
