@@ -1,0 +1,13 @@
+diff --git a/ptts/src/synth.rs b/ptts/src/synth.rs
+--- a/ptts/src/synth.rs
++++ b/ptts/src/synth.rs
+@@ -1710,6 +1710,8 @@
+     fn build_cpu(self) -> Result<Synth> {
+         macro_rules! cpu {
+             ($q:ty) => {
+-                Ok(Synth(Box::new(self.load::<$q>(xn::CPU, false)?)))
++                // On mobile, overlapping the decoder and flow-LM can starve live PCM
++                // and delay cancellation. Render one frame at a time on Android.
++                Ok(Synth(Box::new(self.load::<$q>(xn::CPU, cfg!(target_os = "android"))?)))
+             };
+         }
