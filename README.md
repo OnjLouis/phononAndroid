@@ -5,8 +5,9 @@ voices in English, French, German, Spanish and Portuguese. English character
 voices are included. It uses Android's speaking rate and pitch controls;
 100% is normal speed and faster requests can reach up to three times normal.
 
-Version 1.0.0 is the first public test release. Keep another working speech
-engine available while testing Phonon with TalkBack.
+Version 1.0.2 reads UK currency in English using pounds and pence, including
+"one penny." Keep another working speech engine available while testing
+Phonon with TalkBack.
 
 [Download Phonon for Android from GitHub Releases](https://github.com/OnjLouis/phononAndroid/releases/latest).
 Install the APK on your device and follow Android's installer prompt.
@@ -42,3 +43,7 @@ The packaged multilingual model is available for non-commercial use under
 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/).
 Model, voice catalogue, runtime and Sonic notices are included in the APK.
 The Android application code is [MIT licensed](LICENSE).
+
+The arm64 runtime is built from `xn-ptts` 0.7.0. For the shipped runtime,
+apply `native/ptts-android-inline.patch` and then
+`native/ptts-english-sterling.patch` before building `ptts-ffi`.
