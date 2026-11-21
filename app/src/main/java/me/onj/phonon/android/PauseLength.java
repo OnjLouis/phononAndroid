@@ -17,7 +17,9 @@ enum PauseLength {
     }
 
     static PauseLength selected(Context context) {
-        int saved = context.getSharedPreferences("phonon", Context.MODE_PRIVATE).getInt(KEY, 0);
+        int saved = (BootStorage.unlocked(context)
+                ? context.getSharedPreferences("phonon", Context.MODE_PRIVATE)
+                : BootStorage.speechPreferences(context)).getInt(KEY, 0);
         return switch (saved) {
             case 1 -> SHORTER;
             case 2 -> LONGER;
@@ -27,5 +29,12 @@ enum PauseLength {
 
     void save(Context context) {
         context.getSharedPreferences("phonon", Context.MODE_PRIVATE).edit().putInt(KEY, nativeMode).apply();
+        syncBootPreference(context);
+    }
+
+    static synchronized void syncBootPreference(Context context) {
+        if (BootStorage.unlocked(context)) {
+            BootStorage.speechPreferences(context).edit().putInt(KEY, selected(context).nativeMode).apply();
+        }
     }
 }

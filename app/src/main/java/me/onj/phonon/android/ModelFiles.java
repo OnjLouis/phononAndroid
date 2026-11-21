@@ -2,6 +2,7 @@ package me.onj.phonon.android;
 
 import android.content.Context;
 import android.system.Os;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -23,11 +24,30 @@ final class ModelFiles {
         }
         String id = manifest.getString("id");
         if (!id.matches("[0-9a-f]{24}")) throw new IOException("Invalid model identifier");
-        File root = new File(context.getNoBackupFilesDir(), "models");
+        File root = modelRoot(BootStorage.device(context));
         File model = new File(root, id);
         if (model.isDirectory()) return ready = model;
+        try {
+            return ready = prepareModel(context, manifest, root, model);
+        } catch (Exception failure) {
+            if (BootStorage.unlocked(context)) {
+                File legacy = new File(modelRoot(context), id);
+                if (legacy.isDirectory()) {
+                    Log.w("Phonon", "Boot model preparation failed; retaining the previous model", failure);
+                    return legacy;
+                }
+            }
+            throw failure;
+        }
+    }
+
+    private static File modelRoot(Context context) {
+        return new File(context.getNoBackupFilesDir(), "models");
+    }
+
+    private static File prepareModel(Context context, JSONObject manifest, File root, File model) throws Exception {
         if (!root.isDirectory() && !root.mkdirs()) throw new IOException("Could not create the model folder");
-        File stage = new File(root, id + ".partial");
+        File stage = new File(root, model.getName() + ".partial");
         remove(stage);
         if (!stage.mkdir()) throw new IOException("Could not prepare voice data");
         try {
@@ -61,14 +81,22 @@ final class ModelFiles {
         } finally {
             remove(stage);
         }
-        return ready = model;
+        return model;
     }
 
-    static void discardSuperseded(File active) {
-        File[] models = active.getParentFile().listFiles();
+    static synchronized void discardSuperseded(Context context, File active) {
+        discardModels(active.getParentFile(), active);
+        if (BootStorage.unlocked(context)
+                && modelRoot(BootStorage.device(context)).equals(active.getParentFile())) {
+            discardModels(modelRoot(context), null);
+        }
+    }
+
+    private static void discardModels(File root, File keep) {
+        File[] models = root.listFiles();
         if (models == null) return;
         for (File file : models) {
-            if (!file.equals(active) && file.getName().matches("[0-9a-f]{24}(?:\\.partial)?")) remove(file);
+            if (!file.equals(keep) && file.getName().matches("[0-9a-f]{24}(?:\\.partial)?")) remove(file);
         }
     }
 

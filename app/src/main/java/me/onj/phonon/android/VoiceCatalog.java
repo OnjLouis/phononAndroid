@@ -35,6 +35,7 @@ final class VoiceCatalog {
     private static Set<Locale> installedLocales;
 
     static synchronized List<Entry> entries(Context context) {
+        if (!BootStorage.unlocked(context)) return stock(context);
         if (installed != null) return installed;
         List<Entry> entries = new ArrayList<>(stock(context));
         ImportedVoices.cleanInterruptedWrites(context);
@@ -91,11 +92,13 @@ final class VoiceCatalog {
             preferences(context).edit().remove(SYSTEM_VOICE).remove(SYSTEM_LANGUAGE).apply();
         }
         installed = null;
+        syncBootSelection(context);
     }
 
     static synchronized Entry changeLanguage(Context context, Entry entry, Locale locale) throws IOException {
         ImportedVoices.changeLanguage(context, entry.id(), locale);
         installed = null;
+        syncBootSelection(context);
         return named(context, entry.id());
     }
 
@@ -150,9 +153,25 @@ final class VoiceCatalog {
         return named(context, preferences(context).getString(SYSTEM_VOICE, null));
     }
 
-    static void useForSystem(Context context, Entry voice, Locale currentDefaultLocale) {
+    static synchronized void useForSystem(Context context, Entry voice, Locale currentDefaultLocale) {
         preferences(context).edit().putString(SYSTEM_VOICE, voice.id())
                 .putString(SYSTEM_LANGUAGE, currentDefaultLocale.getLanguage()).apply();
+        syncBootSelection(context);
+    }
+
+    static synchronized void syncBootSelection(Context context) {
+        if (!BootStorage.unlocked(context)) return;
+        Entry selected = savedSystemVoice(context);
+        SharedPreferences.Editor boot = BootStorage.speechPreferences(context).edit();
+        if (selected == null) {
+            boot.remove(SYSTEM_VOICE).remove(SYSTEM_LANGUAGE).apply();
+            return;
+        }
+        // The boot preferences contain only a stock voice, never an imported identifier.
+        Entry available = selected.importFile() == null ? selected
+                : preferred(context, selected.language(), selected.locale().getCountry());
+        boot.putString(SYSTEM_VOICE, available.id())
+                .putString(SYSTEM_LANGUAGE, preferences(context).getString(SYSTEM_LANGUAGE, "")).apply();
     }
 
     static Entry forRequest(Context context, String id, String lang, String country) {
@@ -170,6 +189,7 @@ final class VoiceCatalog {
     }
 
     private static SharedPreferences preferences(Context context) {
+        if (!BootStorage.unlocked(context)) return BootStorage.speechPreferences(context);
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 

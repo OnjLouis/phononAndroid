@@ -13,8 +13,8 @@ android {
         applicationId = "me.onj.phonon.android"
         minSdk = 28
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.0.4"
+        versionCode = 10
+        versionName = "1.0.5"
         testInstrumentationRunner = providers.gradleProperty("phononTestRunner")
             .orElse("me.onj.phonon.android.EngineProbe").get()
         ndk { abiFilters += "arm64-v8a" }

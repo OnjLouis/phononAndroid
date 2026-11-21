@@ -24,12 +24,13 @@ public final class PhononService extends TextToSpeechService {
     private final AtomicLong generation = new AtomicLong();
     private final Object engineLock = new Object();
     private NativeEngine engine;
+    private File modelPath;
+    private boolean unlockedPrepared;
     private volatile boolean destroyed;
     private static final String DRAFT_FILE = "draft-voice.safetensors";
 
     @Override public void onCreate() {
         super.onCreate();
-        new File(getCacheDir(), DRAFT_FILE).delete();
         new Thread(() -> {
             synchronized (engineLock) {
                 if (destroyed) return;
@@ -43,7 +44,15 @@ public final class PhononService extends TextToSpeechService {
         if (engine == null) {
             File path = ModelFiles.prepare(this);
             engine = new NativeEngine(path.getPath());
-            ModelFiles.discardSuperseded(path);
+            modelPath = path;
+            ModelFiles.discardSuperseded(this, path);
+        }
+        if (!unlockedPrepared && BootStorage.unlocked(this)) {
+            new File(getCacheDir(), DRAFT_FILE).delete();
+            VoiceCatalog.syncBootSelection(this);
+            PauseLength.syncBootPreference(this);
+            ModelFiles.discardSuperseded(this, modelPath);
+            unlockedPrepared = true;
         }
         return engine;
     }
@@ -106,7 +115,7 @@ public final class PhononService extends TextToSpeechService {
             File draftFile = null;
             try {
                 NativeEngine active = engine();
-                String draftToken = request.getCallerUid() == android.os.Process.myUid()
+                String draftToken = BootStorage.unlocked(this) && request.getCallerUid() == android.os.Process.myUid()
                         ? request.getParams().getString(draftKey(this)) : null;
                 VoiceCatalog.Entry voice;
                 if (draftToken == null) {

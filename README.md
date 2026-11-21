@@ -12,6 +12,11 @@ Phonon with TalkBack.
 Version 1.0.4 lets you preview a voice before importing, correct its language
 later, and opt in to playing a sample when the selected voice changes.
 
+Version 1.0.5 supports TalkBack before the first unlock after a reboot. Open
+Phonon once after updating and let it prepare the built-in voices. An imported
+system voice stays private until unlock; Phonon uses a built-in voice of the
+same language while the phone is still locked.
+
 Open **Manage imported voices**, choose **Add voice** and pick a compatible
 Phonon .safetensors file in Files. Use **Preview voice** before saving; the
 sample uses English until you choose a language. Enter a name and select one of
