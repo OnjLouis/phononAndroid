@@ -8,6 +8,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.io.File;
 import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -26,14 +27,26 @@ final class VoiceCatalog {
     private static final String SYSTEM_VOICE = "systemVoice";
     private static final String SYSTEM_LANGUAGE = "systemVoiceRequestLanguage";
 
-    record Entry(String id, String name, String modelName, Locale locale, boolean character) {
+    record Entry(String id, String name, String modelName, Locale locale, boolean character, File importFile) {
         String language() { return locale.getLanguage(); }
     }
+    private static List<Entry> stock;
     private static List<Entry> installed;
     private static Set<Locale> installedLocales;
 
     static synchronized List<Entry> entries(Context context) {
         if (installed != null) return installed;
+        List<Entry> entries = new ArrayList<>(stock(context));
+        ImportedVoices.cleanInterruptedWrites(context);
+        for (ImportedVoices.Entry imported : ImportedVoices.entries(context)) {
+            entries.add(new Entry(imported.id(), imported.name(), "", imported.locale(), false, imported.file()));
+        }
+        sort(entries);
+        return installed = Collections.unmodifiableList(entries);
+    }
+
+    private static synchronized List<Entry> stock(Context context) {
+        if (stock != null) return stock;
         try (InputStream stream = context.getAssets().open("voices.json")) {
             JSONArray json = new JSONArray(readText(stream));
             List<Entry> items = new ArrayList<>();
@@ -48,18 +61,36 @@ final class VoiceCatalog {
                 String id = "phonon-" + locale.toLanguageTag() + "-" + Normalizer.normalize(name, Normalizer.Form.NFD)
                         .replaceAll("\\p{M}", "").toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-");
                 if (!ids.add(id)) throw new IOException("Duplicate voice identifier");
-                items.add(new Entry(id, name, modelName, locale, character));
+                items.add(new Entry(id, name, modelName, locale, character, null));
             }
-            items.sort(Comparator.comparing((Entry e) -> e.locale().toLanguageTag())
-                    .thenComparing(Entry::character).thenComparing(Entry::name, String.CASE_INSENSITIVE_ORDER));
+            sort(items);
             Set<Locale> locales = new LinkedHashSet<>();
             for (Entry entry : items) locales.add(entry.locale());
             installedLocales = Collections.unmodifiableSet(locales);
-            installed = Collections.unmodifiableList(items);
-            return installed;
+            return stock = Collections.unmodifiableList(items);
         } catch (Exception e) {
             throw new IllegalStateException("Bundled voice list is invalid", e);
         }
+    }
+
+    private static void sort(List<Entry> items) {
+        items.sort(Comparator.comparing((Entry e) -> e.locale().toLanguageTag())
+                .thenComparing(Entry::character).thenComparing(Entry::name, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(Entry::id));
+    }
+
+    static synchronized Entry addImport(Context context, byte[] bytes, String name, Locale locale) throws IOException {
+        ImportedVoices.Entry imported = ImportedVoices.add(context, bytes, name, locale);
+        installed = null;
+        return named(context, imported.id());
+    }
+
+    static synchronized void removeImport(Context context, Entry entry) throws IOException {
+        ImportedVoices.remove(context, entry.id());
+        if (entry.id().equals(preferences(context).getString(SYSTEM_VOICE, null))) {
+            preferences(context).edit().remove(SYSTEM_VOICE).remove(SYSTEM_LANGUAGE).apply();
+        }
+        installed = null;
     }
 
     static List<Entry> matching(Context context, String lang) {
@@ -78,10 +109,10 @@ final class VoiceCatalog {
 
     static Entry preferred(Context context, String lang, String country) {
         List<Entry> choices = matching(context, lang);
-        for (Entry e : choices) if (!e.character() && hasCountry(e, country)) return e;
-        for (Entry e : choices) if (!e.character()) return e;
-        for (Entry e : entries(context)) if (e.name().equals("Freya")) return e;
-        return entries(context).get(0);
+        for (Entry e : choices) if (e.importFile() == null && !e.character() && hasCountry(e, country)) return e;
+        for (Entry e : choices) if (e.importFile() == null && !e.character()) return e;
+        for (Entry e : stock(context)) if (e.name().equals("Freya")) return e;
+        return stock(context).get(0);
     }
 
     static boolean hasCountry(Entry e, String country) {
@@ -95,7 +126,7 @@ final class VoiceCatalog {
     static String defaultName(Locale locale) { return DEFAULT_PREFIX + locale.toLanguageTag(); }
 
     static synchronized Set<Locale> locales(Context context) {
-        entries(context);
+        stock(context);
         return installedLocales;
     }
 

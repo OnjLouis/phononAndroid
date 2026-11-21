@@ -6,20 +6,25 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.MenuItem;
 import android.view.View;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toolbar;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,6 +34,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
+    private static final int PICK_VOICE = 110;
     private static final String GRADIUM_URL = "https://gradium.ai/";
     private static final String SOFTWARE_URL = "https://onj.me/software/";
     private final ExecutorService background = Executors.newSingleThreadExecutor();
@@ -40,6 +46,7 @@ public final class MainActivity extends Activity {
     private Button languageButton, voiceButton, play, stop, updates;
     private Button resetSample;
     private Button pauseLength;
+    private Button manageVoices;
     private TextView status, systemVoice;
     private EditText text;
     private PreviewSample preview;
@@ -53,10 +60,7 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         preferences = getSharedPreferences("phonon", MODE_PRIVATE);
-        voices.addAll(VoiceCatalog.entries(this));
-        for (VoiceCatalog.Entry entry : voices) {
-            groups.putIfAbsent(key(entry), entry.character() ? "English character voices" : entry.locale().getDisplayName());
-        }
+        loadVoiceCatalog();
         group = preferences.getString("language", "en-GB");
         if (!groups.containsKey(group)) group = groups.keySet().iterator().next();
         voice = VoiceCatalog.named(this, preferences.getString("voice", "phonon-en-GB-freya"));
@@ -94,6 +98,8 @@ public final class MainActivity extends Activity {
         systemVoice.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         refreshNames();
         refreshSystemVoice();
+        manageVoices = button(page, "Manage imported voices", this::manageImportedVoices);
+        manageVoices.setEnabled(false);
         pauseLength = button(page, "Pause length: " + PauseLength.selected(this).label, this::choosePauseLength);
         heading(page, "Preview", 20);
         text = new EditText(this);
@@ -147,7 +153,8 @@ public final class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     if (isDestroyed()) return;
                     ready = true;
-                    status.setText("Ready: " + voices.size() + " voices in five languages.");
+                    status.setText(readyStatus());
+                    manageVoices.setEnabled(true);
                     play.setEnabled(connected);
                 });
             } catch (Exception e) {
@@ -169,8 +176,7 @@ public final class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         LinearLayout page = paddedPage(scroll);
         helpSection(page, "What's new in " + BuildConfig.VERSION_NAME,
-                "Phonon delivers audio more steadily and responds faster when speech is interrupted. "
-                        + "The built-in preview follows the selected language.");
+                "Import compatible Phonon voice files and use them in previews or for system speech.");
         helpSection(page, "Use with TalkBack",
                 "Set Phonon as the preferred engine in Android text-to-speech settings. "
                         + "Choose a voice and tap Use this voice for system speech to use it in TalkBack. "
@@ -180,6 +186,10 @@ public final class MainActivity extends Activity {
                         + "Use Android text-to-speech settings for speaking rate and pitch. "
                         + "Changing languages preserves your preview text. Tap Reset Sample for the built-in text. "
                         + "Pause length adjusts quiet gaps in both previews and system speech. Default leaves those gaps unchanged.");
+        helpSection(page, "Imported voices",
+                "Open Manage imported voices, choose Add voice and pick a compatible .safetensors file from Files. "
+                        + "Enter its name and choose a supported spoken language. Imports stay on this device; "
+                        + "they do not add new languages to the model. Removing the system voice returns to automatic selection.");
         helpSection(page, "Privacy",
                 "Speech runs on your device. Phonon does not send text or audio to a server. "
                         + "Update checks contact GitHub. External links open in your browser.");
@@ -227,6 +237,156 @@ public final class MainActivity extends Activity {
     }
 
     private static String key(VoiceCatalog.Entry e) { return e.character() ? "characters" : e.locale().toLanguageTag(); }
+
+    private void loadVoiceCatalog() {
+        voices.clear();
+        voices.addAll(VoiceCatalog.entries(this));
+        groups.clear();
+        for (VoiceCatalog.Entry entry : voices) {
+            groups.putIfAbsent(key(entry), entry.character() ? "English character voices" : entry.locale().getDisplayName());
+        }
+    }
+
+    private String readyStatus() {
+        int count = (int) voices.stream().filter(e -> e.importFile() != null).count();
+        return "Ready: " + (voices.size() - count) + " built-in voices in five languages. "
+                + count + (count == 1 ? " imported voice." : " imported voices.");
+    }
+
+    private void manageImportedVoices() {
+        List<VoiceCatalog.Entry> imports = new ArrayList<>();
+        for (VoiceCatalog.Entry entry : voices) if (entry.importFile() != null) imports.add(entry);
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle("Manage imported voices")
+                .setPositiveButton("Add voice", (d, which) -> pickVoiceFile())
+                .setNegativeButton("Done", null);
+        if (imports.isEmpty()) dialog.setMessage("No imported voices.");
+        else {
+            String[] labels = imports.stream().map(e -> e.name() + ", " + e.locale().getDisplayName())
+                    .toArray(String[]::new);
+            dialog.setItems(labels, (d, which) -> manageImportedVoice(imports.get(which)));
+        }
+        dialog.show();
+    }
+
+    private void manageImportedVoice(VoiceCatalog.Entry entry) {
+        new AlertDialog.Builder(this).setTitle(entry.name())
+                .setPositiveButton("Select for preview", (d, which) -> {
+                    group = key(entry);
+                    choose(entry);
+                }).setNeutralButton("Remove", (d, which) -> confirmVoiceRemoval(entry))
+                .setNegativeButton("Back", (d, which) -> manageImportedVoices()).show();
+    }
+
+    private void confirmVoiceRemoval(VoiceCatalog.Entry entry) {
+        new AlertDialog.Builder(this).setTitle("Remove " + entry.name() + "?")
+                .setMessage("This removes only Phonon’s copy. If it is your selected system voice, Phonon returns to automatic selection.")
+                .setNegativeButton("Cancel", (d, which) -> manageImportedVoices())
+                .setPositiveButton("Remove", (d, which) -> {
+                    boolean selected = voice.id().equals(entry.id());
+                    if (selected) stop();
+                    background.execute(() -> {
+                        try {
+                            VoiceCatalog.removeImport(getApplicationContext(), entry);
+                            runOnUiThread(() -> {
+                                if (isDestroyed()) return;
+                                loadVoiceCatalog();
+                                if (voice.id().equals(entry.id())) choose(inGroup().get(0));
+                                refreshSystemVoice();
+                                status.setText(readyStatus());
+                                manageImportedVoices();
+                            });
+                        } catch (IOException error) {
+                            runOnUiThread(() -> { if (!isDestroyed()) information("Could not remove this voice."); });
+                        }
+                    });
+                }).show();
+    }
+
+    private void pickVoiceFile() {
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE);
+        // Providers differ on how they label SafeTensors; validate contents after selection.
+        pick.setType("*/*");
+        try { startActivityForResult(pick, PICK_VOICE); }
+        catch (android.content.ActivityNotFoundException e) { information("No Files app is available."); }
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != PICK_VOICE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
+        background.execute(() -> {
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                if (input == null) throw new IOException("Could not open the selected file.");
+                byte[] bytes = ImportedVoices.read(input);
+                String name = importName(uri);
+                runOnUiThread(() -> { if (!isDestroyed()) showImportForm(bytes, name); });
+            } catch (IOException | RuntimeException error) {
+                runOnUiThread(() -> { if (!isDestroyed()) information("Could not read a compatible Phonon .safetensors file."); });
+            }
+        });
+    }
+
+    private String importName(Uri uri) {
+        try (var result = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (result != null && result.moveToFirst()) {
+                String name = result.getString(0);
+                if (name != null) return ImportedVoices.checkedName(name.replaceFirst("(?i)\\.safetensors$", ""));
+            }
+        } catch (IOException | RuntimeException ignored) { }
+        return "Imported Voice";
+    }
+
+    private void showImportForm(byte[] bytes, String suggestedName) {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout page = paddedPage(scroll);
+        EditText name = new EditText(this);
+        name.setSingleLine(true);
+        name.setId(View.generateViewId());
+        heading(page, "Voice name", 16).setLabelFor(name.getId());
+        name.setText(suggestedName);
+        page.addView(name);
+        Spinner picker = new Spinner(this);
+        picker.setId(View.generateViewId());
+        heading(page, "Spoken language", 16).setLabelFor(picker.getId());
+        List<Locale> locales = new ArrayList<>(VoiceCatalog.locales(this));
+        List<String> labels = new ArrayList<>();
+        labels.add("Choose a language");
+        for (Locale locale : locales) labels.add(locale.getDisplayName());
+        ArrayAdapter<String> choices = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, labels);
+        choices.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        picker.setAdapter(choices);
+        page.addView(picker);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Import voice").setView(scroll)
+                .setPositiveButton("Import", null).setNegativeButton("Cancel", null).create();
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String clean;
+            try { clean = ImportedVoices.checkedName(name.getText().toString()); }
+            catch (IOException e) { name.setError(e.getMessage()); name.requestFocus(); return; }
+            int position = picker.getSelectedItemPosition() - 1;
+            if (position < 0) {
+                picker.requestFocus();
+                picker.announceForAccessibility("Choose a spoken language.");
+                return;
+            }
+            Locale locale = locales.get(position);
+            dialog.dismiss();
+            background.execute(() -> {
+                try {
+                    VoiceCatalog.Entry added = VoiceCatalog.addImport(getApplicationContext(), bytes, clean, locale);
+                    runOnUiThread(() -> {
+                        if (isDestroyed()) return;
+                        loadVoiceCatalog();
+                        group = key(added);
+                        choose(added);
+                        status.setText(readyStatus());
+                    });
+                } catch (IOException error) {
+                    runOnUiThread(() -> { if (!isDestroyed()) information(error.getMessage()); });
+                }
+            });
+        }));
+        dialog.show();
+    }
 
     private List<VoiceCatalog.Entry> inGroup() {
         List<VoiceCatalog.Entry> result = new ArrayList<>();

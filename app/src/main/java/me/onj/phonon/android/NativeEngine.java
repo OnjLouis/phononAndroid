@@ -10,6 +10,7 @@ final class NativeEngine implements AutoCloseable {
     interface AudioSink { boolean accept(byte[] pcm, int length); }
 
     private long handle;
+    private String loadedImport;
 
     NativeEngine(String path) throws IOException {
         try { android.system.Os.setenv("RAYON_NUM_THREADS", "2", false); }
@@ -19,8 +20,18 @@ final class NativeEngine implements AutoCloseable {
     }
 
     boolean speak(String text, VoiceCatalog.Entry voice, int rate, int pitch, PauseLength pause, AudioSink sink) {
-        return render(handle, utf8(text), utf8(voice.language()), utf8(voice.modelName()),
+        String name = voice.importFile() == null ? voice.modelName() : "_phonon_import";
+        return render(handle, utf8(text), utf8(voice.language()), utf8(name),
                 scale(rate, 3f), scale(pitch, 2f), pause.nativeMode, sink);
+    }
+
+    boolean prepareVoice(VoiceCatalog.Entry voice) {
+        if (voice.importFile() == null) return true;
+        if (!voice.importFile().isFile()) return false;
+        if (voice.id().equals(loadedImport)) return true;
+        if (!registerImport(handle, utf8(voice.importFile().getPath()))) return false;
+        loadedImport = voice.id();
+        return true;
     }
 
     static float scale(int percent, float maximum) {
@@ -37,6 +48,7 @@ final class NativeEngine implements AutoCloseable {
     }
 
     private static native long open(byte[] path);
+    private static native boolean registerImport(long handle, byte[] path);
     private static native boolean render(long handle, byte[] text, byte[] lang, byte[] voice,
                                          float speed, float pitch, int pause, AudioSink sink);
     private static native void dispose(long handle);

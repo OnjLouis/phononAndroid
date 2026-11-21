@@ -9,6 +9,14 @@ Version 1.0.2 reads UK currency in English using pounds and pence, including
 "one penny." Keep another working speech engine available while testing
 Phonon with TalkBack.
 
+Version 1.0.3 adds **Manage imported voices**. Choose **Add voice** and pick a
+compatible Phonon .safetensors file in Files. Enter a name and select one of
+the languages Phonon already speaks. The new voice is selected for preview;
+it does not take over system speech unless you choose **Use this voice for
+system speech**. Removing your selected system voice restores automatic
+selection. Files remain on your phone, and deleting an import does not
+delete the original file.
+
 [Download Phonon for Android from GitHub Releases](https://github.com/OnjLouis/phononAndroid/releases/latest).
 Install the APK on your device and follow Android's installer prompt.
 
@@ -46,4 +54,5 @@ The Android application code is [MIT licensed](LICENSE).
 
 The arm64 runtime is built from `xn-ptts` 0.7.0. For the shipped runtime,
 apply `native/ptts-android-inline.patch` and then
-`native/ptts-english-sterling.patch` before building `ptts-ffi`.
+`native/ptts-english-sterling.patch` and `native/ptts-android-voice-import.patch`
+before building `ptts-ffi`.

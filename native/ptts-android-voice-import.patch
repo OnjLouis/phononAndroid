@@ -1,0 +1,57 @@
+diff --git a/ptts-ffi/src/cpu.rs b/ptts-ffi/src/cpu.rs
+index d250337..61c6af5 100644
+--- a/ptts-ffi/src/cpu.rs
++++ b/ptts-ffi/src/cpu.rs
+@@ -76,6 +76,17 @@ impl Engine {
+         &self.languages
+     }
+ 
++    pub fn register_imported_voice(&mut self, path: &Path) -> Result<(), String> {
++        // Keep only one imported embedding and its primed state in memory.
++        const SLOT: &str = "_phonon_import";
++        self.synth.add_voice_file(SLOT, path).map_err(|error| error.to_string())?;
++        if !self.voices.iter().any(|name| name == SLOT) {
++            self.voices.push(SLOT.to_string());
++            self.voices.sort();
++        }
++        Ok(())
++    }
++
+     /// Switch to one of [`Self::voices`].
+     pub fn set_voice(&mut self, name: &str) -> Result<(), String> {
+         self.voice = Some(name.to_string());
+diff --git a/ptts-ffi/src/lib.rs b/ptts-ffi/src/lib.rs
+index ab05b91..29896ed 100644
+--- a/ptts-ffi/src/lib.rs
++++ b/ptts-ffi/src/lib.rs
+@@ -170,6 +170,30 @@ pub unsafe extern "C" fn ptts_languages(h: *const PttsHandle) -> *const c_char {
+     unsafe { (*h).language_blob.as_ptr() as *const c_char }
+ }
+ 
++/// Load a validated local file into the Android front end's reusable voice slot.
++///
++/// # Safety
++/// The handle must be exclusively borrowed and path must be NUL-terminated UTF-8.
++#[cfg(target_os = "android")]
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn phonon_register_imported_voice(
++    h: *mut PttsHandle,
++    path: *const c_char,
++) -> bool {
++    let h = unsafe { &mut *h };
++    let path = unsafe { CStr::from_ptr(path) }.to_string_lossy();
++    match guarded(|| h.engine.register_imported_voice(Path::new(path.as_ref()))) {
++        Ok(()) => {
++            h.voice_blob = nul_separated(h.engine.voices());
++            true
++        }
++        Err(e) => {
++            h.last_error = Some(c_string(&e));
++            false
++        }
++    }
++}
++
+ /// Switch to one of `ptts_voices`. Returns false on failure; see `ptts_last_error`.
+ ///
+ /// # Safety

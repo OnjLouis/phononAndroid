@@ -84,11 +84,13 @@ public final class PhononService extends TextToSpeechService {
     @Override protected void onSynthesizeText(SynthesisRequest request, SynthesisCallback callback) {
         long token = generation.get();
         CharSequence text = request.getCharSequenceText();
-        VoiceCatalog.Entry selected = VoiceCatalog.forRequest(this, request.getVoiceName(), request.getLanguage(), request.getCountry());
         synchronized (engineLock) {
             if (destroyed || token != generation.get()) return;
             try {
                 NativeEngine active = engine();
+                VoiceCatalog.Entry voice = VoiceCatalog.forRequest(this, request.getVoiceName(), request.getLanguage(), request.getCountry());
+                VoiceCatalog.Entry selected = active.prepareVoice(voice) ? voice : VoiceCatalog.preferred(
+                        this, voice.language(), voice.locale().getCountry());
                 if (token != generation.get()) return;
                 if (callback.start(NativeEngine.SAMPLE_RATE, AudioFormat.ENCODING_PCM_16BIT, 1) != SUCCESS) return;
                 boolean ok = text == null || text.toString().trim().isEmpty() || active.speak(text.toString(), selected,

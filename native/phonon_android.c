@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include "pause_length.h"
 #include "ptts.h"
+
+extern bool phonon_register_imported_voice(PttsHandle *handle, const char *path);
 #include "sonic.h"
 
 #define SAMPLE_RATE PAUSE_SAMPLE_RATE
@@ -98,6 +100,16 @@ JNIEXPORT jlong JNICALL Java_me_onj_phonon_android_NativeEngine_open(
     (*env)->ReleaseByteArrayElements(env, source, path, JNI_ABORT);
     if (!handle) __android_log_write(ANDROID_LOG_ERROR, "Phonon", "Native model load failed");
     return (jlong)(intptr_t)handle;
+}
+
+JNIEXPORT jboolean JNICALL Java_me_onj_phonon_android_NativeEngine_registerImport(
+    JNIEnv *env, jclass clazz, jlong pointer, jbyteArray path) {
+    (void)clazz;
+    jbyte *bytes = (*env)->GetByteArrayElements(env, path, NULL);
+    if (!bytes) return JNI_FALSE;
+    bool ok = phonon_register_imported_voice((PttsHandle *)(intptr_t)pointer, (const char *)bytes);
+    (*env)->ReleaseByteArrayElements(env, path, bytes, JNI_ABORT);
+    return ok ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL Java_me_onj_phonon_android_NativeEngine_render(

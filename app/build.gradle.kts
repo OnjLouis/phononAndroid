@@ -13,9 +13,10 @@ android {
         applicationId = "me.onj.phonon.android"
         minSdk = 28
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.0.2"
-        testInstrumentationRunner = "me.onj.phonon.android.EngineProbe"
+        versionCode = 8
+        versionName = "1.0.3"
+        testInstrumentationRunner = providers.gradleProperty("phononTestRunner")
+            .orElse("me.onj.phonon.android.EngineProbe").get()
         ndk { abiFilters += "arm64-v8a" }
         val key = providers.gradleProperty("phononUpdateKey").orElse("").get()
         require(key.matches(Regex("[A-Za-z0-9+/=]*")))
@@ -26,6 +27,7 @@ android {
     sourceSets["main"].assets.srcDir(staged.resolve("assets"))
     sourceSets["main"].jniLibs.srcDir(staged.resolve("jniLibs"))
     sourceSets["main"].res.srcDir(staged.resolve("res"))
+    sourceSets["androidTest"].assets.srcDir(staged.resolve("test-assets"))
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
