@@ -7,6 +7,7 @@ import static android.speech.tts.TextToSpeech.LANG_NOT_SUPPORTED;
 import static android.speech.tts.TextToSpeech.SUCCESS;
 
 import android.media.AudioFormat;
+import android.content.Context;
 import android.speech.tts.SynthesisCallback;
 import android.speech.tts.SynthesisRequest;
 import android.speech.tts.TextToSpeechService;
@@ -24,9 +25,11 @@ public final class PhononService extends TextToSpeechService {
     private final Object engineLock = new Object();
     private NativeEngine engine;
     private volatile boolean destroyed;
+    private static final String DRAFT_FILE = "draft-voice.safetensors";
 
     @Override public void onCreate() {
         super.onCreate();
+        new File(getCacheDir(), DRAFT_FILE).delete();
         new Thread(() -> {
             synchronized (engineLock) {
                 if (destroyed) return;
@@ -81,16 +84,45 @@ public final class PhononService extends TextToSpeechService {
 
     @Override protected void onStop() { generation.incrementAndGet(); }
 
+    private static volatile Draft draft;
+    record Draft(String token, byte[] data, Locale locale) {}
+
+    static void setDraft(Draft value) { draft = value; }
+    static String draftKey(Context context) { return context.getPackageName() + ":draftVoice"; }
+
+    private static void rejectDraft(SynthesisCallback callback) {
+        // Older Android file-synthesis callbacks only report an error after start/done.
+        if (callback.start(NativeEngine.SAMPLE_RATE, AudioFormat.ENCODING_PCM_16BIT, 1) == SUCCESS) {
+            callback.error();
+            callback.done();
+        }
+    }
+
     @Override protected void onSynthesizeText(SynthesisRequest request, SynthesisCallback callback) {
         long token = generation.get();
         CharSequence text = request.getCharSequenceText();
         synchronized (engineLock) {
             if (destroyed || token != generation.get()) return;
+            File draftFile = null;
             try {
                 NativeEngine active = engine();
-                VoiceCatalog.Entry voice = VoiceCatalog.forRequest(this, request.getVoiceName(), request.getLanguage(), request.getCountry());
-                VoiceCatalog.Entry selected = active.prepareVoice(voice) ? voice : VoiceCatalog.preferred(
-                        this, voice.language(), voice.locale().getCountry());
+                String draftToken = request.getCallerUid() == android.os.Process.myUid()
+                        ? request.getParams().getString(draftKey(this)) : null;
+                VoiceCatalog.Entry voice;
+                if (draftToken == null) {
+                    voice = VoiceCatalog.forRequest(this, request.getVoiceName(), request.getLanguage(), request.getCountry());
+                } else {
+                    Draft pending = draft;
+                    if (pending == null || !pending.token().equals(draftToken)) { rejectDraft(callback); return; }
+                    draftFile = new File(getCacheDir(), DRAFT_FILE);
+                    java.nio.file.Files.write(draftFile.toPath(), pending.data());
+                    voice = new VoiceCatalog.Entry(pending.token(), "", "", pending.locale(), false, draftFile);
+                }
+                VoiceCatalog.Entry selected = voice;
+                if (!active.prepareVoice(voice)) {
+                    if (draftToken != null) { rejectDraft(callback); return; }
+                    selected = VoiceCatalog.preferred(this, voice.language(), voice.locale().getCountry());
+                }
                 if (token != generation.get()) return;
                 if (callback.start(NativeEngine.SAMPLE_RATE, AudioFormat.ENCODING_PCM_16BIT, 1) != SUCCESS) return;
                 boolean ok = text == null || text.toString().trim().isEmpty() || active.speak(text.toString(), selected,
@@ -108,6 +140,8 @@ public final class PhononService extends TextToSpeechService {
             } catch (Exception | LinkageError error) {
                 Log.w("Phonon", "Speech request failed", error);
                 if (token == generation.get() && !destroyed) callback.error();
+            } finally {
+                if (draftFile != null && !draftFile.delete()) Log.w("Phonon", "Could not clear a preview file");
             }
         }
     }

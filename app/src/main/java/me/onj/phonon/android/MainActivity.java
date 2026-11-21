@@ -15,6 +15,7 @@ import android.view.MenuItem;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -30,6 +31,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
+import java.nio.file.Files;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -37,6 +40,7 @@ public final class MainActivity extends Activity {
     private static final int PICK_VOICE = 110;
     private static final String GRADIUM_URL = "https://gradium.ai/";
     private static final String SOFTWARE_URL = "https://onj.me/software/";
+    private static final String AUTOPLAY = "playOnVoiceChange";
     private final ExecutorService background = Executors.newSingleThreadExecutor();
     private final Map<String, String> groups = new LinkedHashMap<>();
     private final List<VoiceCatalog.Entry> voices = new ArrayList<>();
@@ -102,6 +106,11 @@ public final class MainActivity extends Activity {
         manageVoices.setEnabled(false);
         pauseLength = button(page, "Pause length: " + PauseLength.selected(this).label, this::choosePauseLength);
         heading(page, "Preview", 20);
+        CheckBox autoPlay = new CheckBox(this);
+        autoPlay.setText("Play when voice changes");
+        autoPlay.setChecked(preferences.getBoolean(AUTOPLAY, false));
+        autoPlay.setOnCheckedChangeListener((view, checked) -> preferences.edit().putBoolean(AUTOPLAY, checked).apply());
+        page.addView(autoPlay);
         text = new EditText(this);
         text.setHint("Test text");
         preview = new PreviewSample(voice.language());
@@ -270,11 +279,25 @@ public final class MainActivity extends Activity {
 
     private void manageImportedVoice(VoiceCatalog.Entry entry) {
         new AlertDialog.Builder(this).setTitle(entry.name())
-                .setPositiveButton("Select for preview", (d, which) -> {
-                    group = key(entry);
-                    choose(entry);
-                }).setNeutralButton("Remove", (d, which) -> confirmVoiceRemoval(entry))
+                .setItems(new String[]{"Select for preview", "Change language", "Remove"}, (d, which) -> {
+                    switch (which) {
+                        case 0 -> { group = key(entry); chooseManually(entry); }
+                        case 1 -> editImportedVoice(entry);
+                        case 2 -> confirmVoiceRemoval(entry);
+                    }
+                })
                 .setNegativeButton("Back", (d, which) -> manageImportedVoices()).show();
+    }
+
+    private void editImportedVoice(VoiceCatalog.Entry entry) {
+        background.execute(() -> {
+            try (InputStream input = Files.newInputStream(entry.importFile().toPath())) {
+                byte[] bytes = ImportedVoices.read(input);
+                runOnUiThread(() -> { if (!isDestroyed()) showImportForm(bytes, entry.name(), entry); });
+            } catch (IOException error) {
+                runOnUiThread(() -> { if (!isDestroyed()) information("Could not read this imported voice."); });
+            }
+        });
     }
 
     private void confirmVoiceRemoval(VoiceCatalog.Entry entry) {
@@ -319,7 +342,7 @@ public final class MainActivity extends Activity {
                 if (input == null) throw new IOException("Could not open the selected file.");
                 byte[] bytes = ImportedVoices.read(input);
                 String name = importName(uri);
-                runOnUiThread(() -> { if (!isDestroyed()) showImportForm(bytes, name); });
+                runOnUiThread(() -> { if (!isDestroyed()) showImportForm(bytes, name, null); });
             } catch (IOException | RuntimeException error) {
                 runOnUiThread(() -> { if (!isDestroyed()) information("Could not read a compatible Phonon .safetensors file."); });
             }
@@ -336,15 +359,17 @@ public final class MainActivity extends Activity {
         return "Imported Voice";
     }
 
-    private void showImportForm(byte[] bytes, String suggestedName) {
+    private void showImportForm(byte[] bytes, String suggestedName, VoiceCatalog.Entry editing) {
         ScrollView scroll = new ScrollView(this);
         LinearLayout page = paddedPage(scroll);
         EditText name = new EditText(this);
         name.setSingleLine(true);
         name.setId(View.generateViewId());
-        heading(page, "Voice name", 16).setLabelFor(name.getId());
         name.setText(suggestedName);
-        page.addView(name);
+        if (editing == null) {
+            heading(page, "Voice name", 16).setLabelFor(name.getId());
+            page.addView(name);
+        }
         Spinner picker = new Spinner(this);
         picker.setId(View.generateViewId());
         heading(page, "Spoken language", 16).setLabelFor(picker.getId());
@@ -355,9 +380,34 @@ public final class MainActivity extends Activity {
         ArrayAdapter<String> choices = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, labels);
         choices.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         picker.setAdapter(choices);
+        if (editing != null) picker.setSelection(locales.indexOf(editing.locale()) + 1);
         page.addView(picker);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Import voice").setView(scroll)
-                .setPositiveButton("Import", null).setNegativeButton("Cancel", null).create();
+        TextView previewStatus = new TextView(this);
+        previewStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        Button previewButton = button(page, "Preview voice", () -> {
+            if (!connected || !ready) { previewStatus.setText("Preview is not ready."); return; }
+            int position = picker.getSelectedItemPosition() - 1;
+            Locale locale = position < 0 ? Locale.US : locales.get(position);
+            String token = UUID.randomUUID().toString();
+            PhononService.setDraft(new PhononService.Draft(token, bytes, locale));
+            Bundle parameters = new Bundle();
+            parameters.putString(PhononService.draftKey(this), token);
+            draftStatus = previewStatus;
+            String id = Integer.toString(++sequence);
+            if (tts.speak(PreviewSample.forLanguage(locale.getLanguage()), TextToSpeech.QUEUE_FLUSH,
+                    parameters, id) == TextToSpeech.SUCCESS) previewStatus.setText("Playing preview.");
+            else finishPreview(id, true);
+        });
+        previewButton.setEnabled(connected && ready);
+        button(page, "Stop preview", () -> {
+            stopDraft();
+            previewStatus.setText("Preview stopped.");
+        });
+        page.addView(previewStatus);
+        String title = editing == null ? "Import voice" : "Change language: " + editing.name();
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(title).setView(scroll)
+                .setPositiveButton(editing == null ? "Import" : "Save", null).setNegativeButton("Cancel", null).create();
+        dialog.setOnDismissListener(d -> stopDraft());
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             String clean;
             try { clean = ImportedVoices.checkedName(name.getText().toString()); }
@@ -372,13 +422,19 @@ public final class MainActivity extends Activity {
             dialog.dismiss();
             background.execute(() -> {
                 try {
-                    VoiceCatalog.Entry added = VoiceCatalog.addImport(getApplicationContext(), bytes, clean, locale);
+                    VoiceCatalog.Entry added = editing == null
+                            ? VoiceCatalog.addImport(getApplicationContext(), bytes, clean, locale)
+                            : VoiceCatalog.changeLanguage(getApplicationContext(), editing, locale);
                     runOnUiThread(() -> {
                         if (isDestroyed()) return;
                         loadVoiceCatalog();
-                        group = key(added);
-                        choose(added);
+                        if (editing == null || voice.id().equals(added.id())) {
+                            group = key(added);
+                            choose(added);
+                        }
+                        refreshSystemVoice();
                         status.setText(readyStatus());
+                        if (editing != null) manageImportedVoices();
                     });
                 } catch (IOException error) {
                     runOnUiThread(() -> { if (!isDestroyed()) information(error.getMessage()); });
@@ -401,7 +457,7 @@ public final class MainActivity extends Activity {
                     String tag = tags.get(item);
                     if (!tag.equals(group)) {
                         group = tag;
-                        choose(inGroup().get(0));
+                        chooseManually(inGroup().get(0));
                     }
                     dialog.dismiss();
                 }).setNegativeButton("Cancel", null).show();
@@ -426,8 +482,8 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < labels.length; ++i) labels[i] = list.get(i).name();
         new AlertDialog.Builder(this).setTitle("Voice")
                 .setSingleChoiceItems(labels, list.indexOf(voice), (dialog, item) -> {
-                    choose(list.get(item));
                     dialog.dismiss();
+                    chooseManually(list.get(item));
                 }).setNegativeButton("Cancel", null).show();
     }
 
@@ -438,6 +494,12 @@ public final class MainActivity extends Activity {
         if (sample != null) replaceSample(sample);
         preferences.edit().putString("language", group).putString("voice", voice.id()).apply();
         refreshNames();
+    }
+
+    private void chooseManually(VoiceCatalog.Entry next) {
+        boolean changed = !next.id().equals(voice.id());
+        choose(next);
+        if (changed && preferences.getBoolean(AUTOPLAY, false)) speak();
     }
 
     private void replaceSample(String sample) {
@@ -484,16 +546,31 @@ public final class MainActivity extends Activity {
     private void finishPreview(String id, boolean error) {
         runOnUiThread(() -> {
             if (isDestroyed() || !Integer.toString(sequence).equals(id)) return;
+            if (draftStatus != null) {
+                draftStatus.setText(error ? "Phonon could not speak this preview." : "Preview finished.");
+                draftStatus = null;
+                PhononService.setDraft(null);
+                return;
+            }
             stop.setEnabled(false);
-            status.setText(error ? "Phonon could not speak this preview." : "Ready.");
+            status.setText(error ? "Phonon could not speak this preview." : readyStatus());
         });
+    }
+
+    private TextView draftStatus;
+
+    private void stopDraft() {
+        if (draftStatus == null) return;
+        draftStatus = null;
+        PhononService.setDraft(null);
+        stop();
     }
 
     private void stop() {
         sequence++;
         if (tts != null) tts.stop();
         stop.setEnabled(false);
-        if (ready) status.setText("Ready.");
+        if (ready) status.setText(readyStatus());
     }
 
     private void openSpeechSettings() {
@@ -571,6 +648,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        stopDraft();
         if (tts != null) tts.shutdown();
         background.shutdownNow();
         super.onDestroy();

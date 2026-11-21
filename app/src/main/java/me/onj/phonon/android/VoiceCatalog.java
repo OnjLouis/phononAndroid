@@ -93,6 +93,12 @@ final class VoiceCatalog {
         installed = null;
     }
 
+    static synchronized Entry changeLanguage(Context context, Entry entry, Locale locale) throws IOException {
+        ImportedVoices.changeLanguage(context, entry.id(), locale);
+        installed = null;
+        return named(context, entry.id());
+    }
+
     static List<Entry> matching(Context context, String lang) {
         if (lang == null) return Collections.emptyList();
         List<Entry> result = new ArrayList<>();

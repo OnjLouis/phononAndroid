@@ -9,13 +9,19 @@ Version 1.0.2 reads UK currency in English using pounds and pence, including
 "one penny." Keep another working speech engine available while testing
 Phonon with TalkBack.
 
-Version 1.0.3 adds **Manage imported voices**. Choose **Add voice** and pick a
-compatible Phonon .safetensors file in Files. Enter a name and select one of
+Version 1.0.4 lets you preview a voice before importing, correct its language
+later, and opt in to playing a sample when the selected voice changes.
+
+Open **Manage imported voices**, choose **Add voice** and pick a compatible
+Phonon .safetensors file in Files. Use **Preview voice** before saving; the
+sample uses English until you choose a language. Enter a name and select one of
 the languages Phonon already speaks. The new voice is selected for preview;
 it does not take over system speech unless you choose **Use this voice for
 system speech**. Removing your selected system voice restores automatic
 selection. Files remain on your phone, and deleting an import does not
 delete the original file.
+Choose **Change language** on an existing import to correct the language without
+changing the selected system voice.
 
 [Download Phonon for Android from GitHub Releases](https://github.com/OnjLouis/phononAndroid/releases/latest).
 Install the APK on your device and follow Android's installer prompt.
@@ -29,6 +35,7 @@ request a specific Phonon voice can still use that voice.
 The built-in preview follows the language you choose. Changing languages keeps
 the text you typed. Tap **Reset Sample** to return to the built-in text for the
 current language.
+Turn on **Play when voice changes** to hear a sample when you choose a voice.
 
 **Pause length** applies to previews and system speech. Choose **Shorter** or
 **Longer** to change sustained quiet gaps, or keep **Default** for the original

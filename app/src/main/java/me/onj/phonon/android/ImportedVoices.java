@@ -93,6 +93,28 @@ final class ImportedVoices {
         erase(retired);
     }
 
+    static void changeLanguage(Context context, String id, Locale locale) throws IOException {
+        if (!VoiceCatalog.locales(context).contains(locale)) throw new IOException("Select a supported spoken language.");
+        for (Entry entry : entries(context)) {
+            if (!entry.id().equals(id)) continue;
+            if (entry.locale().equals(locale)) return;
+            File folder = entry.file().getParentFile();
+            File stage = File.createTempFile(".voice-", ".tmp", folder);
+            try {
+                JSONObject sidecar = new JSONObject().put("name", entry.name()).put("locale", locale.toLanguageTag());
+                write(stage, sidecar.toString().getBytes(StandardCharsets.UTF_8));
+                Files.move(stage.toPath(), new File(folder, METADATA).toPath(),
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (JSONException e) {
+                throw new IOException("Could not save the voice details.", e);
+            } finally {
+                Files.deleteIfExists(stage.toPath());
+            }
+            return;
+        }
+        throw new IOException("This imported voice is no longer available.");
+    }
+
     static void cleanInterruptedWrites(Context context) {
         File[] folders = root(context).listFiles((dir, name) -> name.startsWith(".") && ID.matcher(name.substring(1)).matches());
         if (folders != null) for (File folder : folders) erase(folder);
@@ -108,6 +130,8 @@ final class ImportedVoices {
     }
 
     private static void erase(File folder) {
+        File[] temporary = folder.listFiles((dir, name) -> name.startsWith(".voice-") && name.endsWith(".tmp"));
+        if (temporary != null) for (File file : temporary) file.delete();
         new File(folder, METADATA).delete();
         new File(folder, VOICE).delete();
         folder.delete();
